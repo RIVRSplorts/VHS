@@ -28,30 +28,36 @@ class database_handler(object):
     def check_race_ended(self,last_race,last_cup):
         ret = requests.get(url = self.race_url) 
         self.raw_race = ret.json()
+        
         #check the race has finished by comparing the length of the feed
-        #print(self.raw_race["lastfeeditem"], len(self.raw_race["feed"]))
-        if self.raw_race["cup"]["racenum"] != last_race and self.raw_race["cup"]["name"] != last_cup:
+
+
+        if self.raw_race["cup"]["name"] != last_cup or self.raw_race["cup"]["racenum"] != last_race:
             if self.raw_race["over"]:
                 return True
             else:
                 return False
+
         else:
             return False
-         
-    def parse_race(self):
-        #incase anouther process is running we want to give race parsing priority
-        race_record = self.raw_race["feed"]
+
+    def tape_race(self):
 
         if self.preservation_society:
             cup = self.raw_race["cup"]["name"]
             race = self.raw_race["cup"]["racenum"]
-            with open('%s%s_%i.json'%('./json/',cup,race), 'w') as outfile:
+            with open('%s%s_%i.json'%('./json/',cup,race+1), 'w') as outfile:
                 json.dump(self.raw_race,outfile)
-                print('new VHS taped! %s %i'%(cup,race))
+                print('new VHS taped! %s %i'%(cup,race+1))
                 
             self.cur.execute("UPDATE handler_data SET Last_cup = ?, Last_Race = ?",
                              (cup,race))
             self.conn.commit()
+            
+        
+    def parse_race(self):
+        race_record = self.raw_race["feed"]
+
         racers_id =[]
         emojis = []
         teams = []
@@ -63,12 +69,12 @@ class database_handler(object):
             teams.append(line[0])
             emojis.append(line[2])
             queryterm = pattern.findall(line)[0]
-            #self.cur.execute("SELECT ID From Racers WHERE NAME LIKE ?",(queryterm,))
-            self.cur.execute("SELECT ID From Racers WHERE EMOJI = ?",(line[2],))
+            self.cur.execute("SELECT ID From Racers WHERE NAME LIKE ?",(queryterm,))
+            #self.cur.execute("SELECT ID From Racers WHERE EMOJI = ?",(line[2],))
             ret = self.cur.fetchone()
             racers_id.append(ret[0])
             
-        racers = dict( zip(emojis, racers_id))
+        racers = dict(zip(queryterm, racers_id))
 
 
         #race time feed parsing 
@@ -77,12 +83,54 @@ class database_handler(object):
 
         #post race event parsing
         if self.raw_race["cup"]["racenum"] == 3:
-            self.raw_stats = requests.get(url = self.stats_url).json()
-            for team in self.raw_stats['teams'].items():
-                self.cur.execute("UPDATE Teams SET cup_wins = ? WHERE Name = ?",(team[1]['score'],team[0]))
-                self.conn.commit() 
-            print("cup totals updated")
+            wait = True
+            while wait:
+                
+                ret = requests.get(url = self.race_url) 
+                self.raw_race = ret.json()
+                self.raw_stats = requests.get(url = self.stats_url).json()
             
+                for team in self.raw_stats['teams'].items():
+
+                    self.cur.execute("UPDATE Teams SET cup_wins = ? WHERE Name = ?",(team[1]['score'],team[0]))
+                    self.conn.commit() 
+
+                try:
+                    winner = self.raw_race["cupranking"][0]
+                    snd = self.raw_race["cupranking"][1]
+                    last = self.raw_race["cupranking"][-1]
+                    wait = False
+                    
+                    self.cur.execute("SELECT CUPS,TEAM_ID FROM Racers WHERE NAME = ?",(winner,))
+                    ret = self.cur.fetchone()
+                    self.cur.execute("SELECT cup_wins FROM Teams WHERE ID = ?",(ret[1],))
+                    ret2 = self.cur.fetchone()
+                    self.cur.execute("UPDATE Racers SET CUPS = ? WHERE NAME = ?",(ret[0]+1, winner,))
+                    self.cur.execute("UPDATE Teams SET cup_wins = ? WHERE ID =?",(ret2[0]+1, ret[1]))
+                    self.conn.commit()
+                
+                    self.cur.execute("SELECT Cup_2nds,TEAM_ID FROM Racers WHERE NAME = ?",(snd,))
+                    ret = self.cur.fetchone()
+                    self.cur.execute("SELECT cup_2nds FROM Teams WHERE ID = ?",(ret[1],))
+                    ret2 = self.cur.fetchone()
+                    self.cur.execute("UPDATE Racers SET Cup_2nds = ? WHERE NAME = ?",(ret[0]+1, snd,))
+                    self.cur.execute("UPDATE Teams SET cup_2nds = ? WHERE ID =?",(ret2[0]+1, ret[1]))
+                    self.conn.commit()
+                
+                    self.cur.execute("SELECT Cup_Lasts,TEAM_ID FROM Racers WHERE NAME = ?",(last,))
+                    ret = self.cur.fetchone()
+                    self.cur.execute("SELECT cup_8ths FROM Teams WHERE ID = ?",(ret[1],))
+                    ret2 = self.cur.fetchone()
+                    self.cur.execute("UPDATE Racers SET Cup_Lasts = ? WHERE NAME = ?",(ret[0]+1, last,))
+                    self.cur.execute("UPDATE Teams SET cup_8ths = ? WHERE ID =?",(ret2[0]+1, ret[1]))
+                    self.conn.commit()
+
+                    print("cup totals updated")
+                except:
+                    time.sleep(5)
+                
+  
+
         return 
 
 
@@ -138,19 +186,45 @@ if __name__ == "__main__":
     #rough sync to be ~5-10ms accurate to the minute
     #while datetime.now().time().minute:
     #    time.sleep(0.05)
+
     db.cur.execute('SELECT Last_Cup, Last_Race FROM handler_data')
     ret = db.cur.fetchone()
-
     prev_cup = ret[0]
     prev_race = ret[1]
 
     print('begin logging')
     while True:
-        #check twice a minute if race has ended 
-        if db.check_race_ended(prev_race,prev_cup):
-            #if so update racers and parse the race
-            db.update_racers()
-            db.parse_race()
-            time.sleep(120)#sleep for two minutes 
-        else:
-            time.sleep(60)
+        #check twice a minute if race has ended
+        #note check race ended also downloads the race state!
+        try:
+            if db.check_race_ended(prev_race,prev_cup):
+                #if so update racers and parse the race
+                db.update_racers()
+                db.tape_race()
+                Fail = 0
+
+
+                db.parse_race()
+                time.sleep(5)
+
+                    
+                db.cur.execute('SELECT Last_Cup, Last_Race FROM handler_data')
+                ret = db.cur.fetchone()
+                prev_cup = ret[0]
+                prev_race = ret[1]
+
+            else:
+                nowtime = datetime.now().minute
+                if nowtime > 30:
+                    delta = 60 - nowtime
+                else:
+                    delta = 30 - nowtime
+
+                if delta > 120/60:
+                    time.sleep(60)
+                elif delta > 15/60:
+                    time.sleep(10)
+                else:
+                    time.sleep(2)
+        except: #might be splortle down
+            time.sleep(30)#sleep for a bit before trying
