@@ -51,16 +51,16 @@ class database_handler(object):
             cup = self.raw_race["cup"]["name"]
             race = self.raw_race["cup"]["racenum"]
             
-            with open('%s%s_%i.json'%('./json/races/',cup,race+1), 'w') as outfile:
+            with open('%s%s_%i_%s.json'%('./json/races/',cup,race+1,curtime.strftime("%Y-%m-%d %H:%M:%S")), 'w') as outfile:
                 json.dump(self.raw_race,outfile)
                 
 
-            with open('%sracer_stats_%s.json'%('./json/racers/',curtime.strftime("%Y-%m-%d %H:%M:%S"),), 'w') as outfile:
+            with open('%sracer_stats_%s.json'%('./json/racers/',curtime.strftime("%Y-%m-%d %H:%M:%S")), 'w') as outfile:
                 json.dump(self.raw_racers,outfile)
                 
             ret = requests.get(url = self.stats_url)
             self.raw_stats = ret.json()
-            with open('%smisc_stats_%s.json'%('./json/misc/',curtime.strftime("%Y-%m-%d %H:%M:%S"),), 'w') as outfile:
+            with open('%smisc_stats_%s.json'%('./json/misc/',curtime.strftime("%Y-%m-%d %H:%M:%S")), 'w') as outfile:
                 json.dump(self.raw_stats,outfile)
                 
             self.cur.execute("UPDATE handler_data SET Last_cup = ?, Last_Race = ?",
@@ -138,12 +138,12 @@ class database_handler(object):
                     self.conn.commit()
 
                     print("cup totals updated")
-                    wait += 1
+                    wait = 10
                     
                     
                 except:
                     time.sleep(5)
-                    wait = 10
+                    wait += 1
                 
   
 
@@ -238,12 +238,12 @@ if __name__ == "__main__":
                 else:
                     time.sleep(2)
             down_detect = True #disarm
-        except: #might be splortle down
-            
+        except requests.exceptions.Timeout: #might be splortle down
             if down_detect:#detect if should send a message 
                 curtime = datetime.now()
                 print('Can\'t reach splortle at %s'%(curtime.strftime("%Y-%m-%d %H:%M:%S"),))
                 down_detect = False#flag message been sent
-                
+        except:
+            print('An error occured, things might not been recorded properly')
             
             time.sleep(30)#sleep for a bit before trying
