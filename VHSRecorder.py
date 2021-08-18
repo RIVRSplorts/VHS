@@ -23,7 +23,10 @@ class database_handler(object):
         self.cur = database_conn.cursor()
 
         self.preservation_society =True
-        
+        self.cur.execute('SELECT Last_Cup, Last_Race FROM handler_data')
+        ret = self.cur.fetchone()
+        prev_cup = ret[0]
+        prev_race = ret[1]
 
     def check_race_ended(self,last_race,last_cup):
         ret = requests.get(url = self.race_url) 
@@ -44,16 +47,26 @@ class database_handler(object):
     def tape_race(self):
 
         if self.preservation_society:
+            curtime = datetime.now()
             cup = self.raw_race["cup"]["name"]
             race = self.raw_race["cup"]["racenum"]
-            with open('%s%s_%i.json'%('./json/',cup,race+1), 'w') as outfile:
+            
+            with open('%s%s_%i.json'%('./json/races/',cup,race+1), 'w') as outfile:
                 json.dump(self.raw_race,outfile)
-                print('new VHS taped! %s %i'%(cup,race+1))
+                
+
+            with open('%sracer_stats_%s.json'%('./json/racers/',curtime.strftime("%Y-%m-%d %H:%M:%S"),), 'w') as outfile:
+                json.dump(self.raw_racers,outfile)
+                
+            ret = requests.get(url = self.stats_url)
+            self.raw_stats = ret.json()
+            with open('%smisc_stats_%s.json'%('./json/misc/',curtime.strftime("%Y-%m-%d %H:%M:%S"),), 'w') as outfile:
+                json.dump(self.raw_stats,outfile)
                 
             self.cur.execute("UPDATE handler_data SET Last_cup = ?, Last_Race = ?",
                              (cup,race))
             self.conn.commit()
-            
+            print('new VHS taped! %s %i'%(cup,race+1))
         
     def parse_race(self):
         race_record = self.raw_race["feed"]
@@ -83,8 +96,8 @@ class database_handler(object):
 
         #post race event parsing
         if self.raw_race["cup"]["racenum"] == 3:
-            wait = True
-            while wait:
+            wait = 0
+            while wait <5:
                 
                 ret = requests.get(url = self.race_url) 
                 self.raw_race = ret.json()
@@ -99,8 +112,7 @@ class database_handler(object):
                     winner = self.raw_race["cupranking"][0]
                     snd = self.raw_race["cupranking"][1]
                     last = self.raw_race["cupranking"][-1]
-                    wait = False
-                    
+         
                     self.cur.execute("SELECT CUPS,TEAM_ID FROM Racers WHERE NAME = ?",(winner,))
                     ret = self.cur.fetchone()
                     self.cur.execute("SELECT cup_wins FROM Teams WHERE ID = ?",(ret[1],))
@@ -113,7 +125,7 @@ class database_handler(object):
                     ret = self.cur.fetchone()
                     self.cur.execute("SELECT cup_2nds FROM Teams WHERE ID = ?",(ret[1],))
                     ret2 = self.cur.fetchone()
-                    self.cur.execute("UPDATE Racers SET Cup_2nds = ? WHERE NAME = ?",(ret[0]+1, snd,))
+                    self.cur.execute("UPDATE Racers SET cup_2nds = ? WHERE NAME = ?",(ret[0]+1, snd,))
                     self.cur.execute("UPDATE Teams SET cup_2nds = ? WHERE ID =?",(ret2[0]+1, ret[1]))
                     self.conn.commit()
                 
@@ -121,13 +133,17 @@ class database_handler(object):
                     ret = self.cur.fetchone()
                     self.cur.execute("SELECT cup_8ths FROM Teams WHERE ID = ?",(ret[1],))
                     ret2 = self.cur.fetchone()
-                    self.cur.execute("UPDATE Racers SET Cup_Lasts = ? WHERE NAME = ?",(ret[0]+1, last,))
+                    self.cur.execute("UPDATE Racers SET cup_Lasts = ? WHERE NAME = ?",(ret[0]+1, last,))
                     self.cur.execute("UPDATE Teams SET cup_8ths = ? WHERE ID =?",(ret2[0]+1, ret[1]))
                     self.conn.commit()
 
                     print("cup totals updated")
+                    wait += 1
+                    
+                    
                 except:
                     time.sleep(5)
+                    wait = 10
                 
   
 
@@ -187,15 +203,17 @@ if __name__ == "__main__":
     #while datetime.now().time().minute:
     #    time.sleep(0.05)
 
-    db.cur.execute('SELECT Last_Cup, Last_Race FROM handler_data')
-    ret = db.cur.fetchone()
-    prev_cup = ret[0]
-    prev_race = ret[1]
 
     print('begin logging')
+    down_detect = True #arm down detector
     while True:
         #check twice a minute if race has ended
         #note check race ended also downloads the race state!
+        db.cur.execute('SELECT Last_Cup, Last_Race FROM handler_data')
+        ret = db.cur.fetchone()
+        prev_cup = ret[0]
+        prev_race = ret[1]
+
         try:
             if db.check_race_ended(prev_race,prev_cup):
                 #if so update racers and parse the race
@@ -203,16 +221,9 @@ if __name__ == "__main__":
                 db.tape_race()
                 Fail = 0
 
-
+                
                 db.parse_race()
                 time.sleep(5)
-
-                    
-                db.cur.execute('SELECT Last_Cup, Last_Race FROM handler_data')
-                ret = db.cur.fetchone()
-                prev_cup = ret[0]
-                prev_race = ret[1]
-
             else:
                 nowtime = datetime.now().minute
                 if nowtime > 30:
@@ -226,5 +237,13 @@ if __name__ == "__main__":
                     time.sleep(10)
                 else:
                     time.sleep(2)
+            down_detect = True #disarm
         except: #might be splortle down
+            
+            if down_detect:#detect if should send a message 
+                curtime = datetime.now()
+                print('Can\'t reach splortle at %s'%(curtime.strftime("%Y-%m-%d %H:%M:%S"),))
+                down_detect = False#flag message been sent
+                
+            
             time.sleep(30)#sleep for a bit before trying
