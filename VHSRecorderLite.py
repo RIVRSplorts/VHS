@@ -83,7 +83,7 @@ class database_handler(object):
             'dbname': (None, 'Season.db'),
         }
         response = requests.post('https://api.dbhub.io/v1/upload', files=files)
-
+        print(response.status_code) #print the response
         if response.status_code == 201:
             with open("last_commit.txt", "w") as f:
                 content = json.loads(response.text)
@@ -119,6 +119,7 @@ if __name__ == "__main__":
 
                 db.tape_race()
                 Fail = 0
+                #run advanced stats
                 try:
                     db.adv_stats()
                 except:
