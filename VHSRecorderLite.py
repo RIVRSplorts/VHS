@@ -6,7 +6,7 @@ import time
 import re
 import atexit
 import subprocess
-
+import os
 '''
 Simplified script to run the recorder compared to the more complex database injestor 
 
@@ -49,18 +49,21 @@ class database_handler(object):
         curtime = datetime.now()
         cup = self.raw_race["cup"]["name"]
         race = self.raw_race["cup"]["racenum"]
-            
-        with open('%s%s_%s_%i.json'%('../json/races/',curtime.strftime("%Y-%m-%d %H:%M:%S"),cup,race+1), 'w') as outfile:
+        season = self.raw_race["metadata"]["season"]
+        if not os.path.exists('../json/%s/'%(season,)):
+            os.mkdir('../json/%s/'%(season,))
+        
+        with open('%s%s_%s_%i.json'%('../json/%s/races/'%(season,),curtime.strftime("%Y-%m-%d %H:%M:%S"),cup,race+1), 'w') as outfile:
             json.dump(self.raw_race,outfile)
                 
         ret = requests.get(url = self.racers_url) 
         self.raw_racers = ret.json()
-        with open('%sracer_stats_%s.json'%('../json/racers/',curtime.strftime("%Y-%m-%d %H:%M:%S")), 'w') as outfile:
+        with open('%sracer_stats_%s.json'%('../json/%s/racers/'%(season,),curtime.strftime("%Y-%m-%d %H:%M:%S")), 'w') as outfile:
             json.dump(self.raw_racers,outfile)
                 
         ret = requests.get(url = self.stats_url)
         self.raw_stats = ret.json()
-        with open('%smisc_stats_%s.json'%('../json/misc/',curtime.strftime("%Y-%m-%d %H:%M:%S")), 'w') as outfile:
+        with open('%smisc_stats_%s.json'%('../json/%s/misc/'%(season,),curtime.strftime("%Y-%m-%d %H:%M:%S")), 'w') as outfile:
             json.dump(self.raw_stats,outfile)
                 
         self.cur.execute("UPDATE handler_data SET Last_cup = ?, Last_Race = ?",
@@ -145,7 +148,9 @@ if __name__ == "__main__":
                 curtime = datetime.now()
                 print('Can\'t reach splortle at %s'%(curtime.strftime("%Y-%m-%d %H:%M:%S"),))
                 down_detect = False#flag message been sent
-        except:
+        except Exception as ex:
             print('An error occured, things might not been recorded properly')
+            print(ex)
+            #raise
             time.sleep(30)#sleep for a bit before trying
             
